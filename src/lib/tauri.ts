@@ -41,16 +41,19 @@ import type {
   McpMarketplaceItem,
   McpMarketplaceServerDetail,
 } from "./types"
-import {
-  createRuntimeUnavailableError,
-  isTauriRuntime,
-} from "./runtime"
+import { createRuntimeUnavailableError, isTauriRuntime } from "./runtime"
 
 const WEB_DEMO_FOLDER_ID = 1
 const WEB_DEMO_FOLDER_PATH = "/web-demo/workspace"
 const WEB_DEMO_FOLDER_NAME = "Codeg Web Demo"
 const WEB_DEMO_BRANCH = "web-preview"
 const WEB_DEMO_TIMESTAMP = "2026-03-08T00:00:00.000Z"
+const WEB_COMMAND_API_BASE =
+  process.env.NEXT_PUBLIC_CODEG_WEB_API_BASE?.trim() ||
+  process.env.NEXT_PUBLIC_CODEG_BACKEND_URL?.trim() ||
+  null
+const WEB_CONVERSATION_DB_STORAGE_KEY = "codeg:web-runtime-db:v1"
+const WEB_COMMAND_NOT_HANDLED = Symbol("web-command-not-handled")
 
 const WEB_DEMO_FOLDER_HISTORY: FolderHistoryEntry[] = [
   {
@@ -72,10 +75,15 @@ const WEB_DEMO_FOLDER_DETAIL: FolderDetail = {
   opened_conversations: [],
 }
 
-const WEB_EMPTY_STATS: AgentStats = {
-  total_conversations: 0,
-  total_messages: 0,
-  by_agent: [],
+interface WebConversationRecord {
+  summary: DbConversationSummary
+  turns: DbConversationDetail["turns"]
+  session_stats: DbConversationDetail["session_stats"]
+}
+
+interface WebConversationDbState {
+  nextConversationId: number
+  conversations: WebConversationRecord[]
 }
 
 function asRecord(
@@ -91,8 +99,16 @@ function asNumber(value: unknown, fallback: number): number {
   return fallback
 }
 
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null
 }
 
 function navigateTo(path: string) {
@@ -103,6 +119,204 @@ function navigateTo(path: string) {
 function resolveSettingsPath(section: unknown): string {
   const value = typeof section === "string" && section.trim() ? section : null
   return value ? `/settings/${value}` : "/settings/appearance"
+}
+
+function hasWebStorage(): boolean {
+  return (
+    typeof window !== "undefined" && typeof window.localStorage !== "undefined"
+  )
+}
+
+function getDefaultWebConversationDbState(): WebConversationDbState {
+  return {
+    nextConversationId: WEB_DEMO_FOLDER_ID + 1,
+    conversations: [],
+  }
+}
+
+function loadWebConversationDbState(): WebConversationDbState {
+  if (!hasWebStorage()) {
+    return getDefaultWebConversationDbState()
+  }
+
+  try {
+    const raw = window.localStorage.getItem(WEB_CONVERSATION_DB_STORAGE_KEY)
+    if (!raw) {
+      return getDefaultWebConversationDbState()
+    }
+
+    const parsed = JSON.parse(raw) as Partial<WebConversationDbState>
+    return {
+      nextConversationId:
+        typeof parsed.nextConversationId === "number" &&
+        Number.isFinite(parsed.nextConversationId)
+          ? parsed.nextConversationId
+          : WEB_DEMO_FOLDER_ID + 1,
+      conversations: Array.isArray(parsed.conversations)
+        ? (parsed.conversations as WebConversationRecord[])
+        : [],
+    }
+  } catch {
+    return getDefaultWebConversationDbState()
+  }
+}
+
+function saveWebConversationDbState(state: WebConversationDbState): void {
+  if (!hasWebStorage()) return
+  window.localStorage.setItem(
+    WEB_CONVERSATION_DB_STORAGE_KEY,
+    JSON.stringify(state)
+  )
+}
+
+function updateWebConversationDbState<T>(
+  updater: (state: WebConversationDbState) => T
+): T {
+  const state = loadWebConversationDbState()
+  const result = updater(state)
+  saveWebConversationDbState(state)
+  return result
+}
+
+function buildWebFolderInfo(): FolderInfo {
+  const state = loadWebConversationDbState()
+  return {
+    path: WEB_DEMO_FOLDER_PATH,
+    name: WEB_DEMO_FOLDER_NAME,
+    agent_types: ["codex"],
+    conversation_count: state.conversations.filter(
+      (conversation) => conversation.summary.folder_id === WEB_DEMO_FOLDER_ID
+    ).length,
+  }
+}
+
+function buildWebStats(): AgentStats {
+  const state = loadWebConversationDbState()
+  const byAgent = new Map<AgentType, number>()
+  let totalMessages = 0
+
+  for (const conversation of state.conversations) {
+    totalMessages += conversation.summary.message_count
+    const count = byAgent.get(conversation.summary.agent_type) ?? 0
+    byAgent.set(conversation.summary.agent_type, count + 1)
+  }
+
+  return {
+    total_conversations: state.conversations.length,
+    total_messages: totalMessages,
+    by_agent: [...byAgent.entries()].map(
+      ([agent_type, conversation_count]) => ({
+        agent_type,
+        conversation_count,
+      })
+    ),
+  }
+}
+
+function sortWebConversationRecords(
+  records: WebConversationRecord[]
+): WebConversationRecord[] {
+  return [...records].sort((left, right) =>
+    right.summary.updated_at.localeCompare(left.summary.updated_at)
+  )
+}
+
+function listWebFolderConversationSummaries(
+  args: Record<string, unknown>
+): DbConversationSummary[] {
+  const folderId = asNullableNumber(args.folderId)
+  const agentType = asNullableString(args.agentType) as AgentType | null
+  const search = asNullableString(args.search)?.toLowerCase() ?? null
+  const status = asNullableString(args.status)
+
+  return sortWebConversationRecords(loadWebConversationDbState().conversations)
+    .filter((conversation) => {
+      if (folderId != null && conversation.summary.folder_id !== folderId) {
+        return false
+      }
+      if (agentType && conversation.summary.agent_type !== agentType) {
+        return false
+      }
+      if (status && conversation.summary.status !== status) {
+        return false
+      }
+      if (
+        search &&
+        !(conversation.summary.title ?? "").toLowerCase().includes(search)
+      ) {
+        return false
+      }
+      return true
+    })
+    .map((conversation) => conversation.summary)
+}
+
+function getWebConversationDetail(
+  conversationId: number
+): DbConversationDetail {
+  const conversation = loadWebConversationDbState().conversations.find(
+    (record) => record.summary.id === conversationId
+  )
+
+  if (!conversation) {
+    throw new Error(
+      `Conversation ${conversationId} was not found in Web preview.`
+    )
+  }
+
+  return {
+    summary: conversation.summary,
+    turns: conversation.turns,
+    session_stats: conversation.session_stats,
+  }
+}
+
+async function invokeViaWebCommandApi<T>(
+  command: string,
+  args: Record<string, unknown>,
+  hasFallback: boolean
+): Promise<T | typeof WEB_COMMAND_NOT_HANDLED> {
+  if (!WEB_COMMAND_API_BASE || typeof fetch !== "function") {
+    return WEB_COMMAND_NOT_HANDLED
+  }
+
+  const baseUrl = WEB_COMMAND_API_BASE.replace(/\/+$/, "")
+
+  try {
+    const response = await fetch(`${baseUrl}/api/commands/${command}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ args }),
+    })
+
+    if (response.status === 404 || response.status === 405) {
+      return WEB_COMMAND_NOT_HANDLED
+    }
+
+    if (!response.ok) {
+      throw new Error(`Web API command ${command} failed: ${response.status}`)
+    }
+
+    const payload = await response.json()
+    if (payload && typeof payload === "object") {
+      if ("data" in payload) {
+        return payload.data as T
+      }
+      if ("result" in payload) {
+        return payload.result as T
+      }
+    }
+
+    return payload as T
+  } catch (error) {
+    if (hasFallback) {
+      console.warn(`[tauri.ts] web api fallback for ${command}:`, error)
+      return WEB_COMMAND_NOT_HANDLED
+    }
+    throw error
+  }
 }
 
 const webCommandHandlers: Record<
@@ -124,32 +338,95 @@ const webCommandHandlers: Record<
   open_settings_window: async (args) => {
     navigateTo(resolveSettingsPath(args.section))
   },
-  list_folders: async () => [
-    {
-      path: WEB_DEMO_FOLDER_PATH,
-      name: WEB_DEMO_FOLDER_NAME,
-      agent_types: ["codex"],
-      conversation_count: 0,
-    } satisfies FolderInfo,
-  ],
-  get_stats: async () => WEB_EMPTY_STATS,
-  get_sidebar_data: async () => ({
-    folders: [],
-    stats: WEB_EMPTY_STATS,
-  } satisfies SidebarData),
+  list_folders: async () => [buildWebFolderInfo()],
+  get_stats: async () => buildWebStats(),
+  get_sidebar_data: async () =>
+    ({
+      folders: [buildWebFolderInfo()],
+      stats: buildWebStats(),
+    }) satisfies SidebarData,
   get_folder: async (args) => ({
     ...WEB_DEMO_FOLDER_DETAIL,
     id: asNumber(args.folderId, WEB_DEMO_FOLDER_ID),
   }),
-  list_folder_conversations: async () => [],
+  list_folder_conversations: async (args) =>
+    listWebFolderConversationSummaries(args),
+  get_folder_conversation: async (args) =>
+    getWebConversationDetail(asNumber(args.conversationId, -1)),
+  create_conversation: async (args) =>
+    updateWebConversationDbState((state) => {
+      const conversationId = state.nextConversationId
+      state.nextConversationId += 1
+      const now = new Date().toISOString()
+      state.conversations.unshift({
+        summary: {
+          id: conversationId,
+          folder_id: asNumber(args.folderId, WEB_DEMO_FOLDER_ID),
+          title: asNullableString(args.title),
+          agent_type:
+            (asNullableString(args.agentType) as AgentType | null) ?? "codex",
+          status: "in_progress",
+          model: null,
+          git_branch: WEB_DEMO_BRANCH,
+          external_id: null,
+          message_count: 0,
+          created_at: now,
+          updated_at: now,
+        },
+        turns: [],
+        session_stats: null,
+      })
+      return conversationId
+    }),
+  update_conversation_status: async (args) => {
+    updateWebConversationDbState((state) => {
+      const conversation = state.conversations.find(
+        (record) => record.summary.id === asNumber(args.conversationId, -1)
+      )
+      if (!conversation) return
+      conversation.summary.status = asString(
+        args.status,
+        conversation.summary.status
+      )
+      conversation.summary.updated_at = new Date().toISOString()
+    })
+  },
+  update_conversation_title: async (args) => {
+    updateWebConversationDbState((state) => {
+      const conversation = state.conversations.find(
+        (record) => record.summary.id === asNumber(args.conversationId, -1)
+      )
+      if (!conversation) return
+      conversation.summary.title = asNullableString(args.title)
+      conversation.summary.updated_at = new Date().toISOString()
+    })
+  },
+  update_conversation_external_id: async (args) => {
+    updateWebConversationDbState((state) => {
+      const conversation = state.conversations.find(
+        (record) => record.summary.id === asNumber(args.conversationId, -1)
+      )
+      if (!conversation) return
+      conversation.summary.external_id = asNullableString(args.externalId)
+      conversation.summary.updated_at = new Date().toISOString()
+    })
+  },
+  delete_conversation: async (args) => {
+    updateWebConversationDbState((state) => {
+      state.conversations = state.conversations.filter(
+        (record) => record.summary.id !== asNumber(args.conversationId, -1)
+      )
+    })
+  },
   remove_folder_from_history: async () => undefined,
   get_git_branch: async () => WEB_DEMO_BRANCH,
   git_list_branches: async () => [WEB_DEMO_BRANCH],
-  git_list_all_branches: async () => ({
-    local: [WEB_DEMO_BRANCH],
-    remote: [],
-    worktree_branches: [],
-  } satisfies GitBranchList),
+  git_list_all_branches: async () =>
+    ({
+      local: [WEB_DEMO_BRANCH],
+      remote: [],
+      worktree_branches: [],
+    }) satisfies GitBranchList,
   git_status: async () => [],
   git_diff: async () => "",
   git_diff_with_branch: async () => "",
@@ -161,34 +438,38 @@ const webCommandHandlers: Record<
   list_folder_commands: async () => [],
   bootstrap_folder_commands_from_package_json: async () => [],
   get_file_tree: async () => [],
-  read_file_preview: async (args) => ({
-    path: asString(args.path),
-    content: "当前为 Web 版预览，未接入本地文件系统。",
-    truncated: false,
-  } satisfies FilePreviewContent),
-  read_file_for_edit: async (args) => ({
-    path: asString(args.path),
-    content: "当前为 Web 版预览，未接入本地文件系统。",
-    etag: "web-preview",
-    mtime_ms: null,
-    readonly: true,
-    truncated: false,
-    line_ending: "lf",
-  } satisfies FileEditContent),
+  read_file_preview: async (args) =>
+    ({
+      path: asString(args.path),
+      content: "当前为 Web 版预览，未接入本地文件系统。",
+      truncated: false,
+    }) satisfies FilePreviewContent,
+  read_file_for_edit: async (args) =>
+    ({
+      path: asString(args.path),
+      content: "当前为 Web 版预览，未接入本地文件系统。",
+      etag: "web-preview",
+      mtime_ms: null,
+      readonly: true,
+      truncated: false,
+      line_ending: "lf",
+    }) satisfies FileEditContent,
   terminal_list: async () => [],
   terminal_kill: async () => undefined,
   acp_list_agents: async () => [],
   acp_list_connections: async () => [],
-  get_system_proxy_settings: async () => ({
-    enabled: false,
-    proxy_url: null,
-  } satisfies SystemProxySettings),
+  get_system_proxy_settings: async () =>
+    ({
+      enabled: false,
+      proxy_url: null,
+    }) satisfies SystemProxySettings,
   update_system_proxy_settings: async (args) =>
     args.settings as SystemProxySettings,
-  get_system_language_settings: async () => ({
-    mode: "manual",
-    language: "zh_cn",
-  } satisfies SystemLanguageSettings),
+  get_system_language_settings: async () =>
+    ({
+      mode: "manual",
+      language: "zh_cn",
+    }) satisfies SystemLanguageSettings,
   update_system_language_settings: async (args) =>
     args.settings as SystemLanguageSettings,
   mcp_scan_local: async () => [],
@@ -204,14 +485,23 @@ async function invoke<T>(
     return tauriInvoke<T>(command, args)
   }
 
+  const normalizedArgs = asRecord(args)
   const handler = webCommandHandlers[command]
+  const apiResult = await invokeViaWebCommandApi<T>(
+    command,
+    normalizedArgs,
+    Boolean(handler)
+  )
+  if (apiResult !== WEB_COMMAND_NOT_HANDLED) {
+    return apiResult as T
+  }
+
   if (handler) {
-    return (await handler(asRecord(args))) as T
+    return (await handler(normalizedArgs)) as T
   }
 
   throw createRuntimeUnavailableError(command)
 }
-
 export async function listConversations(params?: {
   agent_type?: AgentType | null
   search?: string | null

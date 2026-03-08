@@ -44,10 +44,7 @@ import {
   startFileTreeWatch,
   stopFileTreeWatch,
 } from "@/lib/tauri"
-import {
-  listenRuntimeEvent,
-  type RuntimeUnlistenFn,
-} from "@/lib/runtime"
+import { listenRuntimeEvent, type RuntimeUnlistenFn } from "@/lib/runtime"
 import type { FileTreeChangedEvent, GitStatusEntry } from "@/lib/types"
 import {
   AlertDialog,

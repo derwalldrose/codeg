@@ -1115,7 +1115,15 @@
         "loadingSettings": "Loading settings...",
         "loadingMode": "Loading mode...",
         "cancel": "Cancel",
-        "send": "Send"
+        "send": "Send",
+        "queueNext": "Queue next",
+        "steerNow": "Steer now",
+        "sendNow": "Send now",
+        "clearQueuedPrompt": "Clear queued message",
+        "queuedNextLabel": "Queued next",
+        "pendingSteerLabel": "Pending steer",
+        "steering": "Steering…",
+        "queueHint": "Enter queues next · Ctrl/Cmd+Enter steers now"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "Settings > Agents",

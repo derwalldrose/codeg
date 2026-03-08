@@ -1,6 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import { useTranslations } from "next-intl"
 import { useAcpActions } from "@/contexts/acp-connections-context"
 import { useTaskContext } from "@/contexts/task-context"
@@ -8,8 +14,17 @@ import { useConnection, type UseConnectionReturn } from "@/hooks/use-connection"
 import { AGENT_LABELS, type AgentType, type PromptDraft } from "@/lib/types"
 import { getPromptDraftDisplayText } from "@/lib/prompt-draft"
 import {
-  clearPendingPromptText,
-  setPendingPromptText,
+  clearActivePromptText,
+  clearPendingPromptState,
+  clearQueuedPrompt,
+  getQueuedPrompt,
+  setActivePromptText,
+  setQueuedPrompt,
+  setQueuedPromptIntent,
+  subscribePendingPromptState,
+  takeQueuedPrompt,
+  type PendingPromptIntent,
+  type QueuedPromptState,
 } from "@/lib/pending-prompt-text"
 
 interface UseConnectionLifecycleOptions {
@@ -20,13 +35,22 @@ interface UseConnectionLifecycleOptions {
   sessionId?: string
 }
 
+export type PromptDispatchIntent = "send" | PendingPromptIntent
+
 export interface UseConnectionLifecycleReturn {
   conn: UseConnectionReturn
   modeLoading: boolean
   configOptionsLoading: boolean
   autoConnectError: string | null
+  pendingPrompt: QueuedPromptState | null
   handleFocus: () => void
-  handleSend: (draft: PromptDraft, modeId?: string | null) => void
+  handleSend: (
+    draft: PromptDraft,
+    modeId?: string | null,
+    intent?: PromptDispatchIntent
+  ) => void
+  handleSendPendingPromptNow: () => void
+  handleClearPendingPrompt: () => void
   handleSetConfigOption: (configId: string, valueId: string) => void
   handleCancel: () => void
   handleRespondPermission: (requestId: string, optionId: string) => void
@@ -54,9 +78,12 @@ export function useConnectionLifecycle({
   const { setActiveKey, touchActivity } = useAcpActions()
   const { addTask, updateTask, removeTask } = useTaskContext()
   const conn = useConnection(contextKey)
+  const pendingPrompt = useSyncExternalStore(
+    subscribePendingPromptState,
+    () => getQueuedPrompt(contextKey),
+    () => getQueuedPrompt(contextKey)
+  )
 
-  // Destructure stable callbacks (depend only on actions + contextKey)
-  // vs. volatile derived state (status, liveMessage, etc.)
   const {
     status,
     selectorsReady,
@@ -77,6 +104,7 @@ export function useConnectionLifecycle({
     null
   )
   const selectorTaskSuppressedRef = useRef(false)
+  const cancelRequestedRef = useRef(false)
   const modeLoading =
     status === "connecting" ||
     status === "downloading" ||
@@ -91,10 +119,6 @@ export function useConnectionLifecycle({
     message: string
   } | null>(null)
 
-  // Refs for auto-connect effect, which intentionally avoids volatile
-  // dependencies to prevent reconnect loops. Synced via useEffect —
-  // effects run in declaration order, so these are current before
-  // the auto-connect effect reads them.
   const statusRef = useRef(status)
   useEffect(() => {
     statusRef.current = status
@@ -119,7 +143,7 @@ export function useConnectionLifecycle({
   useEffect(() => {
     modeIdRef.current = modes?.current_mode_id ?? null
   }, [modes?.current_mode_id])
-  // Sync activeKey when this view is the active tab
+
   useEffect(() => {
     if (isActive && contextKey) {
       setActiveKey(contextKey)
@@ -127,17 +151,16 @@ export function useConnectionLifecycle({
     }
   }, [isActive, contextKey, setActiveKey, touchActivity])
 
-  // Auto-connect when tab becomes active and workingDir is available.
-  // Depends on isActive + workingDir so that connections wait for folder
-  // info to load (workingDir transitions from undefined → folder.path).
-  // Status changes must NOT re-trigger this to avoid infinite reconnect
-  // loops on transient errors.
   useEffect(() => {
     if (!isActive) return
     if (!workingDir) return
     let cancelled = false
-    const s = statusRef.current
-    if (!s || s === "disconnected" || s === "error") {
+    const currentStatus = statusRef.current
+    if (
+      !currentStatus ||
+      currentStatus === "disconnected" ||
+      currentStatus === "error"
+    ) {
       connConnectRef
         .current(agentTypeRef.current, workingDir, sessionIdRef.current, {
           source: "auto_link",
@@ -165,7 +188,6 @@ export function useConnectionLifecycle({
     }
   }, [isActive, workingDir])
 
-  // Manage task status for connection progress
   const taskIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (status === "connecting" || status === "downloading") {
@@ -203,7 +225,7 @@ export function useConnectionLifecycle({
 
   useEffect(() => {
     if (status === "prompting") return
-    clearPendingPromptText(contextKey)
+    clearActivePromptText(contextKey)
   }, [status, contextKey])
 
   const clearSelectorTask = useCallback(() => {
@@ -267,7 +289,6 @@ export function useConnectionLifecycle({
     t,
   ])
 
-  // Clean up lingering task on unmount (e.g. tab closed while connecting)
   useEffect(() => {
     return () => {
       if (taskIdRef.current) {
@@ -275,8 +296,97 @@ export function useConnectionLifecycle({
       }
       selectorTaskSuppressedRef.current = false
       clearSelectorTask()
+      clearPendingPromptState(contextKey)
     }
-  }, [removeTask, clearSelectorTask])
+  }, [removeTask, clearSelectorTask, contextKey])
+
+  const connectIfNeeded = useCallback(() => {
+    if (!workingDir) return
+    if (
+      status === "connected" ||
+      status === "prompting" ||
+      status === "connecting" ||
+      status === "downloading"
+    ) {
+      return
+    }
+
+    setLastAutoConnectError(null)
+    connConnect(agentType, workingDir, sessionId, {
+      source: "auto_link",
+    }).catch((e: unknown) => {
+      setLastAutoConnectError({
+        contextKey,
+        agentType,
+        message: normalizeErrorMessage(e),
+      })
+      if (!isExpectedAutoLinkError(e)) {
+        console.error("[ConnLifecycle] connect:", e)
+      }
+    })
+  }, [agentType, connConnect, contextKey, sessionId, status, workingDir])
+
+  const sendDraftNow = useCallback(
+    (draft: PromptDraft, modeId?: string | null) => {
+      const displayText = getPromptDraftDisplayText(
+        draft,
+        sharedT("attachedResources")
+      )
+
+      touchActivity(contextKey)
+      setActivePromptText(contextKey, draft, displayText, modeId ?? null)
+
+      void (async () => {
+        const currentModeId = modeIdRef.current
+        if (modeId && modeId !== currentModeId) {
+          await connSetMode(modeId)
+          modeIdRef.current = modeId
+        }
+        await sendPrompt(draft.blocks)
+      })().catch((e: unknown) => {
+        clearActivePromptText(contextKey)
+        console.error("[ConnLifecycle] sendPrompt:", e)
+      })
+    },
+    [connSetMode, sendPrompt, contextKey, touchActivity, sharedT]
+  )
+
+  const queueDraft = useCallback(
+    (
+      draft: PromptDraft,
+      modeId: string | null | undefined,
+      intent: PendingPromptIntent
+    ) => {
+      const displayText = getPromptDraftDisplayText(
+        draft,
+        sharedT("attachedResources")
+      )
+
+      touchActivity(contextKey)
+      setQueuedPrompt(contextKey, draft, displayText, modeId ?? null, intent)
+    },
+    [contextKey, sharedT, touchActivity]
+  )
+
+  useEffect(() => {
+    if (status !== "connected") return
+
+    const queued = getQueuedPrompt(contextKey)
+    if (!queued) {
+      cancelRequestedRef.current = false
+      return
+    }
+
+    if (cancelRequestedRef.current && queued.intent !== "steer") {
+      cancelRequestedRef.current = false
+      return
+    }
+
+    cancelRequestedRef.current = false
+    const next = takeQueuedPrompt(contextKey)
+    if (!next) return
+    sendDraftNow(next.draft, next.modeId)
+  }, [contextKey, sendDraftNow, status])
 
   const handleFocus = useCallback(() => {
     touchActivity(contextKey)
@@ -308,32 +418,81 @@ export function useConnectionLifecycle({
         ? lastAutoConnectError.message
         : null
 
-  // sendPrompt, connCancel, connRespondPermission are stable (depend
-  // only on actions + contextKey), so these callbacks are effectively stable.
   const handleSend = useCallback(
-    (draft: PromptDraft, modeId?: string | null) => {
-      touchActivity(contextKey)
-      setPendingPromptText(
-        contextKey,
-        getPromptDraftDisplayText(draft, sharedT("attachedResources"))
-      )
-      void (async () => {
-        const currentModeId = modeIdRef.current
-        if (modeId && modeId !== currentModeId) {
-          await connSetMode(modeId)
-          // Optimistically track selected mode to avoid duplicate set_mode
-          // calls before CurrentModeUpdate arrives from the agent.
-          modeIdRef.current = modeId
+    (
+      draft: PromptDraft,
+      modeId?: string | null,
+      intent?: PromptDispatchIntent
+    ) => {
+      const resolvedIntent: PromptDispatchIntent =
+        intent ?? (status === "prompting" ? "queue_next" : "send")
+
+      if (resolvedIntent === "steer") {
+        if (status === "connected") {
+          sendDraftNow(draft, modeId)
+          return
         }
-        await sendPrompt(draft.blocks)
-      })().catch((e: unknown) =>
-        console.error("[ConnLifecycle] sendPrompt:", e)
-      )
+
+        queueDraft(draft, modeId, "steer")
+        if (status === "prompting") {
+          cancelRequestedRef.current = true
+          connCancel().catch((e: unknown) =>
+            console.error("[ConnLifecycle] cancel for steer:", e)
+          )
+          return
+        }
+
+        connectIfNeeded()
+        return
+      }
+
+      if (status === "prompting" || resolvedIntent === "queue_next") {
+        queueDraft(draft, modeId, "queue_next")
+        connectIfNeeded()
+        return
+      }
+
+      if (status === "connected") {
+        sendDraftNow(draft, modeId)
+        return
+      }
+
+      queueDraft(draft, modeId, "queue_next")
+      connectIfNeeded()
     },
-    [connSetMode, sendPrompt, contextKey, touchActivity, sharedT]
+    [status, sendDraftNow, queueDraft, connCancel, connectIfNeeded]
   )
 
+  const handleSendPendingPromptNow = useCallback(() => {
+    const queued = getQueuedPrompt(contextKey)
+    if (!queued) return
+
+    if (status === "prompting") {
+      setQueuedPromptIntent(contextKey, "steer")
+      cancelRequestedRef.current = true
+      connCancel().catch((e: unknown) =>
+        console.error("[ConnLifecycle] cancel pending steer:", e)
+      )
+      return
+    }
+
+    if (status === "connected") {
+      const next = takeQueuedPrompt(contextKey)
+      if (next) {
+        sendDraftNow(next.draft, next.modeId)
+      }
+      return
+    }
+
+    connectIfNeeded()
+  }, [contextKey, status, connCancel, sendDraftNow, connectIfNeeded])
+
+  const handleClearPendingPrompt = useCallback(() => {
+    clearQueuedPrompt(contextKey)
+  }, [contextKey])
+
   const handleCancel = useCallback(() => {
+    cancelRequestedRef.current = true
     connCancel().catch((e: unknown) =>
       console.error("[ConnLifecycle] cancel:", e)
     )
@@ -364,8 +523,11 @@ export function useConnectionLifecycle({
     modeLoading,
     configOptionsLoading,
     autoConnectError,
+    pendingPrompt,
     handleFocus,
     handleSend,
+    handleSendPendingPromptNow,
+    handleClearPendingPrompt,
     handleSetConfigOption,
     handleCancel,
     handleRespondPermission,

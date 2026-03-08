@@ -66,8 +66,11 @@ const ExistingConversationView = memo(function ExistingConversationView({
     conn,
     modeLoading,
     configOptionsLoading,
+    pendingPrompt,
     handleFocus,
     handleSend,
+    handleSendPendingPromptNow,
+    handleClearPendingPrompt,
     handleSetConfigOption,
     handleCancel,
     handleRespondPermission,
@@ -109,7 +112,11 @@ const ExistingConversationView = memo(function ExistingConversationView({
 
   // Wrap handleSend to update status
   const handleSendWithPersist = useCallback(
-    (draft: PromptDraft, selectedModeId?: string | null) => {
+    (
+      draft: PromptDraft,
+      selectedModeId?: string | null,
+      intent?: "send" | "queue_next" | "steer"
+    ) => {
       setPendingMessages((prev) => [
         ...prev,
         {
@@ -127,7 +134,7 @@ const ExistingConversationView = memo(function ExistingConversationView({
         .then(() => refreshConversations())
         .catch((e) => console.error("[ExistingConv] update status:", e))
       statusUpdatedRef.current = false
-      handleSend(draft, selectedModeId)
+      handleSend(draft, selectedModeId, intent)
     },
     [conversationId, handleSend, refreshConversations, sharedT]
   )
@@ -229,6 +236,9 @@ const ExistingConversationView = memo(function ExistingConversationView({
         agentType,
         conversationId
       )}
+      pendingPrompt={pendingPrompt}
+      onSendPendingPromptNow={handleSendPendingPromptNow}
+      onClearPendingPrompt={handleClearPendingPrompt}
     >
       <MessageListView
         conversationId={conversationId}

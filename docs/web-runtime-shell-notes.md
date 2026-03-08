@@ -44,6 +44,8 @@
 - 文件夹页可进入的默认工作区壳
 - 设置页、提交页、欢迎页等页面跳转能力
 - 语言设置、部分列表接口的基础兜底返回
+- 可选的 Web command HTTP 入口：当前端设置 `NEXT_PUBLIC_CODEG_WEB_API_BASE`（或 `NEXT_PUBLIC_CODEG_BACKEND_URL`）时，会优先请求 `/api/commands/:command`
+- 没有真实后端时，浏览器本地会对会话创建/状态更新等基础能力做 localStorage 级 fallback，便于继续验证前端工作流
 
 ### 3. 移除前端对 Tauri API 的硬绑定
 

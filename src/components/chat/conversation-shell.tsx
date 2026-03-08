@@ -6,8 +6,10 @@ import type {
   SessionModeInfo,
   AvailableCommandInfo,
 } from "@/lib/types"
+import type { QueuedPromptState } from "@/lib/pending-prompt-text"
 import type { PendingPermission } from "@/contexts/acp-connections-context"
 import { ChatInput } from "@/components/chat/chat-input"
+import type { PromptSubmitIntent } from "@/components/chat/message-input"
 import { PermissionDialog } from "@/components/chat/permission-dialog"
 
 interface ConversationShellProps {
@@ -16,7 +18,11 @@ interface ConversationShellProps {
   error: string | null
   pendingPermission: PendingPermission | null
   onFocus: () => void
-  onSend: (draft: PromptDraft, modeId?: string | null) => void
+  onSend: (
+    draft: PromptDraft,
+    modeId?: string | null,
+    intent?: PromptSubmitIntent
+  ) => void
   onCancel: () => void
   onRespondPermission: (requestId: string, optionId: string) => void
   children: ReactNode
@@ -30,6 +36,9 @@ interface ConversationShellProps {
   availableCommands?: AvailableCommandInfo[] | null
   attachmentTabId?: string | null
   draftStorageKey?: string | null
+  pendingPrompt?: QueuedPromptState | null
+  onSendPendingPromptNow?: () => void
+  onClearPendingPrompt?: () => void
 }
 
 export function ConversationShell({
@@ -52,6 +61,9 @@ export function ConversationShell({
   availableCommands,
   attachmentTabId,
   draftStorageKey,
+  pendingPrompt,
+  onSendPendingPromptNow,
+  onClearPendingPrompt,
 }: ConversationShellProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -78,6 +90,9 @@ export function ConversationShell({
         availableCommands={availableCommands}
         attachmentTabId={attachmentTabId}
         draftStorageKey={draftStorageKey}
+        pendingPrompt={pendingPrompt}
+        onSendPendingPromptNow={onSendPendingPromptNow}
+        onClearPendingPrompt={onClearPendingPrompt}
       />
 
       {error && (

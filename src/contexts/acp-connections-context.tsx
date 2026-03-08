@@ -39,10 +39,7 @@ import {
   CONNECTION_IDLE_TIMEOUT_MS,
   IDLE_SWEEP_INTERVAL_MS,
 } from "@/lib/constants"
-import {
-  listenRuntimeEvent,
-  type RuntimeUnlistenFn,
-} from "@/lib/runtime"
+import { listenRuntimeEvent, type RuntimeUnlistenFn } from "@/lib/runtime"
 import { useAlertContext, type AlertAction } from "@/contexts/alert-context"
 
 // ── Shared types (re-exported for consumers) ──

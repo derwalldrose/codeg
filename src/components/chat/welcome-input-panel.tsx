@@ -35,6 +35,8 @@ import {
   updateConversationStatus,
   updateConversationExternalId,
 } from "@/lib/tauri"
+import { listenRuntimeEvent } from "@/lib/runtime"
+import { migratePendingPromptState } from "@/lib/pending-prompt-text"
 import { AgentSelector } from "@/components/chat/agent-selector"
 import { LiveMessageBlock } from "@/components/chat/live-message-block"
 import { AgentPlanOverlay } from "@/components/chat/agent-plan-overlay"
@@ -242,10 +244,6 @@ export function WelcomeInputPanel({
     null
   )
   const canAutoConnect = agentsLoaded && usableAgentCount > 0
-  const pendingPromptRef = useRef<{
-    draft: PromptDraft
-    modeId: string | null
-  } | null>(null)
   const newConversationDraftStorageKey = useMemo(
     () =>
       buildNewConversationDraftStorageKey({
@@ -279,8 +277,11 @@ export function WelcomeInputPanel({
     modeLoading,
     configOptionsLoading,
     autoConnectError,
+    pendingPrompt,
     handleFocus,
     handleSend: lifecycleSend,
+    handleSendPendingPromptNow,
+    handleClearPendingPrompt,
     handleSetConfigOption,
     handleCancel,
     handleRespondPermission,
@@ -424,26 +425,23 @@ export function WelcomeInputPanel({
       }
     }
 
-    void import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen<AgentsUpdatedEventPayload>(ACP_AGENTS_UPDATED_EVENT, (event) => {
-          if (cancelled) return
-          if (event.payload?.reason === "agent_reordered") return
-          const changedAgentType = event.payload?.agent_type
-          if (
-            changedAgentType &&
-            changedAgentType !== selectedAgentRef.current
-          ) {
-            return
-          }
-          if (agentStatusRefreshTimerRef.current) {
-            clearTimeout(agentStatusRefreshTimerRef.current)
-          }
-          agentStatusRefreshTimerRef.current = setTimeout(() => {
-            void syncCurrentAgentStatus()
-          }, 120)
-        })
-      )
+    void listenRuntimeEvent<AgentsUpdatedEventPayload>(
+      ACP_AGENTS_UPDATED_EVENT,
+      (event) => {
+        if (cancelled) return
+        if (event.payload?.reason === "agent_reordered") return
+        const changedAgentType = event.payload?.agent_type
+        if (changedAgentType && changedAgentType !== selectedAgentRef.current) {
+          return
+        }
+        if (agentStatusRefreshTimerRef.current) {
+          clearTimeout(agentStatusRefreshTimerRef.current)
+        }
+        agentStatusRefreshTimerRef.current = setTimeout(() => {
+          void syncCurrentAgentStatus()
+        }, 120)
+      }
+    )
       .then((dispose) => {
         if (cancelled) {
           dispose()
@@ -452,7 +450,7 @@ export function WelcomeInputPanel({
         unlisten = dispose
       })
       .catch(() => {
-        // Ignore when non-tauri runtime.
+        // Ignore when runtime events are unavailable.
       })
 
     return () => {
@@ -504,15 +502,6 @@ export function WelcomeInputPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- conn.liveMessage, lifecycleSend intentionally omitted: effect only fires on status transitions
   }, [connStatus, refreshConversations, refreshConversationFromDb, sharedT])
 
-  // When connection becomes "connected" and we have a pending prompt, send it
-  useEffect(() => {
-    if (connStatus === "connected" && pendingPromptRef.current) {
-      const pending = pendingPromptRef.current
-      pendingPromptRef.current = null
-      lifecycleSend(pending.draft, pending.modeId)
-    }
-  }, [connStatus, lifecycleSend])
-
   // Promote tab helper — call once when conversation ends or component unmounts
   const promoteTab = useCallback(() => {
     if (tabPromotedRef.current || !dbConvIdRef.current) return
@@ -526,6 +515,7 @@ export function WelcomeInputPanel({
     // Keep in-flight stream/state attached when this new-conversation view
     // is closed and later reopened as a canonical conversation tab.
     migrateContextKey(contextKey, canonicalContextKey)
+    migratePendingPromptState(contextKey, canonicalContextKey)
 
     if (tid) {
       promoteNewConversationTab(tid, convId, agent, title)
@@ -592,7 +582,11 @@ export function WelcomeInputPanel({
 
   // Welcome phase: submit first message.
   const handleWelcomeSend = useCallback(
-    (draft: PromptDraft, selectedModeId?: string | null) => {
+    (
+      draft: PromptDraft,
+      selectedModeId?: string | null,
+      intent?: "send" | "queue_next" | "steer"
+    ) => {
       const displayText = getPromptDraftDisplayText(
         draft,
         sharedT("attachedResources")
@@ -612,27 +606,11 @@ export function WelcomeInputPanel({
       applySessionStats(null)
       statsRefreshSeqRef.current += 1
 
-      // If already connected, send directly; otherwise queue for when connected
-      if (connStatus === "connected") {
-        lifecycleSend(draft, selectedModeId)
-      } else {
-        pendingPromptRef.current = {
-          draft,
-          modeId: selectedModeId ?? null,
-        }
-        // Ensure connection is being established
-        if (
-          !connStatus ||
-          connStatus === "disconnected" ||
-          connStatus === "error"
-        ) {
-          connConnect(selectedAgent, workingDir, undefined, {
-            source: "auto_link",
-          }).catch((e) => {
-            setAgentConnectError(normalizeErrorMessage(e))
-          })
-        }
-      }
+      lifecycleSend(
+        draft,
+        selectedModeId,
+        intent ?? (connStatus === "connected" ? "send" : "queue_next")
+      )
 
       // DB persistence: create conversation
       const title = displayText.slice(0, 80)
@@ -675,7 +653,11 @@ export function WelcomeInputPanel({
 
   // Conversation phase: prepend user message to history before sending
   const handleSendWithHistory = useCallback(
-    (draft: PromptDraft, selectedModeId?: string | null) => {
+    (
+      draft: PromptDraft,
+      selectedModeId?: string | null,
+      intent?: "send" | "queue_next" | "steer"
+    ) => {
       const userMsg: AdaptedMessage = {
         id: crypto.randomUUID(),
         role: "user",
@@ -687,7 +669,7 @@ export function WelcomeInputPanel({
         timestamp: new Date().toISOString(),
       }
       setHistory((h) => [...h, userMsg])
-      lifecycleSend(draft, selectedModeId)
+      lifecycleSend(draft, selectedModeId, intent)
 
       // Update status
       if (dbConvIdRef.current) {
@@ -810,6 +792,9 @@ export function WelcomeInputPanel({
             disabled={!canAutoConnect || isConnecting}
             className="min-h-28 max-h-60"
             draftStorageKey={newConversationDraftStorageKey}
+            pendingPrompt={pendingPrompt}
+            onSendPendingPromptNow={handleSendPendingPromptNow}
+            onClearPendingPrompt={handleClearPendingPrompt}
           />
         </div>
       </div>
@@ -844,6 +829,9 @@ export function WelcomeInputPanel({
       availableCommands={connectionCommands}
       attachmentTabId={tabId ?? null}
       draftStorageKey={activeDraftStorageKey}
+      pendingPrompt={pendingPrompt}
+      onSendPendingPromptNow={handleSendPendingPromptNow}
+      onClearPendingPrompt={handleClearPendingPrompt}
     >
       <div className="relative flex flex-col h-full">
         <MessageThread className="flex-1 min-h-0">
