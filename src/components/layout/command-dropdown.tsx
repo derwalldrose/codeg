@@ -1,6 +1,5 @@
 "use client"
 
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { ChevronDown, Play, Plus, Square } from "lucide-react"
 import { useTranslations } from "next-intl"
@@ -20,6 +19,10 @@ import {
   terminalKill,
   terminalList,
 } from "@/lib/tauri"
+import {
+  listenRuntimeEvent,
+  type RuntimeUnlistenFn,
+} from "@/lib/runtime"
 import type { FolderCommand, TerminalEvent } from "@/lib/types"
 import { CommandManageDialog } from "./command-manage-dialog"
 
@@ -53,7 +56,7 @@ export function CommandDropdown() {
   const [runningCommandTerminals, setRunningCommandTerminals] = useState<
     Record<number, string>
   >({})
-  const exitUnlistenersRef = useRef<Map<string, UnlistenFn>>(new Map())
+  const exitUnlistenersRef = useRef<Map<string, RuntimeUnlistenFn>>(new Map())
   const runningCommandTerminalsRef = useRef<Record<number, string>>({})
 
   const folderId = folder?.id ?? 0
@@ -164,7 +167,7 @@ export function CommandDropdown() {
     async (terminalId: string) => {
       if (exitUnlistenersRef.current.has(terminalId)) return
       try {
-        const unlisten = await listen<TerminalEvent>(
+        const unlisten = await listenRuntimeEvent<TerminalEvent>(
           `terminal://exit/${terminalId}`,
           () => {
             clearRunningByTerminalId(terminalId)

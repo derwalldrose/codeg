@@ -13,8 +13,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { useAcpActions } from "@/contexts/acp-connections-context"
-import { openUrl } from "@tauri-apps/plugin-opener"
 import { openSettingsWindow } from "@/lib/tauri"
+import { openExternalUrl } from "@/lib/runtime"
 import { AGENT_LABELS, type AgentType } from "@/lib/types"
 
 const KNOWN_AGENT_TYPES = new Set<AgentType>(
@@ -62,7 +62,7 @@ function AlertActionButton({ action }: { action: AlertAction }) {
   const handleClick = async () => {
     switch (action.kind) {
       case "open_url":
-        await openUrl(action.payload)
+        await openExternalUrl(action.payload)
         break
       case "retry_connection": {
         try {

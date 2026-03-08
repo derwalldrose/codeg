@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core"
 import type {
   AgentType,
   ConversationSummary,
@@ -42,6 +41,176 @@ import type {
   McpMarketplaceItem,
   McpMarketplaceServerDetail,
 } from "./types"
+import {
+  createRuntimeUnavailableError,
+  isTauriRuntime,
+} from "./runtime"
+
+const WEB_DEMO_FOLDER_ID = 1
+const WEB_DEMO_FOLDER_PATH = "/web-demo/workspace"
+const WEB_DEMO_FOLDER_NAME = "Codeg Web Demo"
+const WEB_DEMO_BRANCH = "web-preview"
+const WEB_DEMO_TIMESTAMP = "2026-03-08T00:00:00.000Z"
+
+const WEB_DEMO_FOLDER_HISTORY: FolderHistoryEntry[] = [
+  {
+    id: WEB_DEMO_FOLDER_ID,
+    path: WEB_DEMO_FOLDER_PATH,
+    name: WEB_DEMO_FOLDER_NAME,
+    last_opened_at: WEB_DEMO_TIMESTAMP,
+  },
+]
+
+const WEB_DEMO_FOLDER_DETAIL: FolderDetail = {
+  id: WEB_DEMO_FOLDER_ID,
+  name: WEB_DEMO_FOLDER_NAME,
+  path: WEB_DEMO_FOLDER_PATH,
+  git_branch: WEB_DEMO_BRANCH,
+  parent_branch: null,
+  default_agent_type: "codex",
+  last_opened_at: WEB_DEMO_TIMESTAMP,
+  opened_conversations: [],
+}
+
+const WEB_EMPTY_STATS: AgentStats = {
+  total_conversations: 0,
+  total_messages: 0,
+  by_agent: [],
+}
+
+function asRecord(
+  value: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  return value ?? {}
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value
+  }
+  return fallback
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback
+}
+
+function navigateTo(path: string) {
+  if (typeof window === "undefined") return
+  window.location.assign(path)
+}
+
+function resolveSettingsPath(section: unknown): string {
+  const value = typeof section === "string" && section.trim() ? section : null
+  return value ? `/settings/${value}` : "/settings/appearance"
+}
+
+const webCommandHandlers: Record<
+  string,
+  (args: Record<string, unknown>) => unknown | Promise<unknown>
+> = {
+  load_folder_history: async () => WEB_DEMO_FOLDER_HISTORY,
+  list_open_folders: async () => WEB_DEMO_FOLDER_HISTORY,
+  focus_folder_window: async () => {
+    navigateTo(`/folder?id=${WEB_DEMO_FOLDER_ID}`)
+  },
+  open_folder_window: async () => {
+    navigateTo(`/folder?id=${WEB_DEMO_FOLDER_ID}`)
+  },
+  open_commit_window: async (args) => {
+    const folderId = asNumber(args.folderId, WEB_DEMO_FOLDER_ID)
+    navigateTo(`/commit?folderId=${folderId}`)
+  },
+  open_settings_window: async (args) => {
+    navigateTo(resolveSettingsPath(args.section))
+  },
+  list_folders: async () => [
+    {
+      path: WEB_DEMO_FOLDER_PATH,
+      name: WEB_DEMO_FOLDER_NAME,
+      agent_types: ["codex"],
+      conversation_count: 0,
+    } satisfies FolderInfo,
+  ],
+  get_stats: async () => WEB_EMPTY_STATS,
+  get_sidebar_data: async () => ({
+    folders: [],
+    stats: WEB_EMPTY_STATS,
+  } satisfies SidebarData),
+  get_folder: async (args) => ({
+    ...WEB_DEMO_FOLDER_DETAIL,
+    id: asNumber(args.folderId, WEB_DEMO_FOLDER_ID),
+  }),
+  list_folder_conversations: async () => [],
+  remove_folder_from_history: async () => undefined,
+  get_git_branch: async () => WEB_DEMO_BRANCH,
+  git_list_branches: async () => [WEB_DEMO_BRANCH],
+  git_list_all_branches: async () => ({
+    local: [WEB_DEMO_BRANCH],
+    remote: [],
+    worktree_branches: [],
+  } satisfies GitBranchList),
+  git_status: async () => [],
+  git_diff: async () => "",
+  git_diff_with_branch: async () => "",
+  git_show_diff: async () => "",
+  git_show_file: async () => "",
+  git_is_tracked: async () => false,
+  git_log: async () => [],
+  git_commit_branches: async () => [],
+  list_folder_commands: async () => [],
+  bootstrap_folder_commands_from_package_json: async () => [],
+  get_file_tree: async () => [],
+  read_file_preview: async (args) => ({
+    path: asString(args.path),
+    content: "当前为 Web 版预览，未接入本地文件系统。",
+    truncated: false,
+  } satisfies FilePreviewContent),
+  read_file_for_edit: async (args) => ({
+    path: asString(args.path),
+    content: "当前为 Web 版预览，未接入本地文件系统。",
+    etag: "web-preview",
+    mtime_ms: null,
+    readonly: true,
+    truncated: false,
+    line_ending: "lf",
+  } satisfies FileEditContent),
+  terminal_list: async () => [],
+  terminal_kill: async () => undefined,
+  acp_list_agents: async () => [],
+  acp_list_connections: async () => [],
+  get_system_proxy_settings: async () => ({
+    enabled: false,
+    proxy_url: null,
+  } satisfies SystemProxySettings),
+  update_system_proxy_settings: async (args) =>
+    args.settings as SystemProxySettings,
+  get_system_language_settings: async () => ({
+    mode: "manual",
+    language: "zh_cn",
+  } satisfies SystemLanguageSettings),
+  update_system_language_settings: async (args) =>
+    args.settings as SystemLanguageSettings,
+  mcp_scan_local: async () => [],
+  mcp_list_marketplaces: async () => [],
+}
+
+async function invoke<T>(
+  command: string,
+  args?: Record<string, unknown>
+): Promise<T> {
+  if (isTauriRuntime()) {
+    const { invoke: tauriInvoke } = await import("@tauri-apps/api/core")
+    return tauriInvoke<T>(command, args)
+  }
+
+  const handler = webCommandHandlers[command]
+  if (handler) {
+    return (await handler(asRecord(args))) as T
+  }
+
+  throw createRuntimeUnavailableError(command)
+}
 
 export async function listConversations(params?: {
   agent_type?: AgentType | null

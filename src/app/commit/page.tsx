@@ -3,11 +3,11 @@
 import { Suspense, useCallback, useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { useTranslations } from "next-intl"
-import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Loader2 } from "lucide-react"
 import { CommitWorkspace } from "@/components/layout/commit-dialog"
 import { AppTitleBar } from "@/components/layout/app-title-bar"
 import { AppToaster } from "@/components/ui/app-toaster"
+import { closeRuntimeWindow } from "@/lib/runtime"
 import { getFolder } from "@/lib/tauri"
 import type { FolderDetail } from "@/lib/types"
 
@@ -36,8 +36,7 @@ function CommitPageInner() {
   const error = state.loadedId === normalizedFolderId ? state.error : null
 
   const closeWindow = useCallback(() => {
-    getCurrentWindow()
-      .close()
+    closeRuntimeWindow()
       .catch((err) => {
         console.error("[CommitPage] failed to close window:", err)
       })

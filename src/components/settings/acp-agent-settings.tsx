@@ -28,7 +28,6 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react"
-import { openUrl } from "@tauri-apps/plugin-opener"
 import { toast } from "sonner"
 import { AgentIcon } from "@/components/agent-icon"
 import {
@@ -66,6 +65,7 @@ import {
   acpUninstallAgent,
   acpUpdateAgentPreferences,
 } from "@/lib/tauri"
+import { openExternalUrl } from "@/lib/runtime"
 import type {
   AcpAgentInfo,
   AgentType,
@@ -2840,7 +2840,7 @@ export function AcpAgentSettings() {
       return
     }
     if (action.kind === "open_url") {
-      await openUrl(action.payload)
+      await openExternalUrl(action.payload)
       return
     }
     if (action.kind === "download_binary") {
@@ -4928,7 +4928,7 @@ supports_websockets = true`}
                         size="sm"
                         variant="outline"
                         onClick={() => {
-                          openUrl(
+                          openExternalUrl(
                             "https://geminicli.com/docs/get-started/authentication/"
                           ).catch((err) => {
                             console.error(

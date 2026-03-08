@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import { usePlatform } from "@/hooks/use-platform"
+import { isTauriRuntime } from "@/lib/runtime"
 import { cn } from "@/lib/utils"
 import { WindowControls } from "./window-controls"
 
@@ -25,11 +26,13 @@ export function AppTitleBar({
   showWindowControls = true,
 }: AppTitleBarProps) {
   const { isMac, isWindows } = usePlatform()
+  const showNativeWindowControls =
+    showWindowControls && isWindows && isTauriRuntime()
 
   const rowPadding = cn(
     "px-3",
     isMac && "pl-[76px]",
-    isWindows && showWindowControls && "pr-[138px]"
+    showNativeWindowControls && "pr-[138px]"
   )
 
   return (
@@ -54,7 +57,7 @@ export function AppTitleBar({
           <div
             className={cn(
               "ml-auto shrink-0",
-              isWindows && showWindowControls && "mr-4"
+              showNativeWindowControls && "mr-4"
             )}
           >
             {right}
@@ -70,7 +73,7 @@ export function AppTitleBar({
         </div>
       ) : null}
 
-      {showWindowControls && isWindows ? (
+      {showNativeWindowControls ? (
         <div className="absolute right-0 top-0 z-30">
           <WindowControls />
         </div>

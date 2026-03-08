@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
 import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -18,6 +17,7 @@ import {
   ATTACH_FILE_TO_SESSION_EVENT,
   type AttachFileToSessionDetail,
 } from "@/lib/session-attachment-events"
+import { openRuntimeDialog } from "@/lib/runtime"
 import { ModeSelector } from "@/components/chat/mode-selector"
 import { SessionConfigSelector } from "@/components/chat/session-config-selector"
 import { SlashCommandMenu } from "@/components/chat/slash-command-menu"
@@ -251,7 +251,7 @@ export function MessageInput({
   const handlePickFiles = useCallback(async () => {
     if (disabled) return
     try {
-      const selected = await open({
+      const selected = await openRuntimeDialog({
         multiple: true,
         directory: false,
         defaultPath: defaultPath || undefined,

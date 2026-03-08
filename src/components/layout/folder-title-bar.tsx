@@ -7,7 +7,6 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
 import {
   Columns2,
   FileCode2,
@@ -33,6 +32,7 @@ import {
   formatShortcutLabel,
   matchShortcutEvent,
 } from "@/lib/keyboard-shortcuts"
+import { isWebRuntime, openRuntimeDialog } from "@/lib/runtime"
 import { AppTitleBar } from "./app-title-bar"
 import { FolderNameDropdown } from "./folder-name-dropdown"
 import { BranchDropdown } from "./branch-dropdown"
@@ -78,8 +78,16 @@ export function FolderTitleBar() {
 
   const handleOpenFolder = useCallback(async () => {
     try {
-      const selected = await open({ directory: true, multiple: false })
-      if (!selected) return
+      if (isWebRuntime()) {
+        await openFolderWindow("web-demo")
+        return
+      }
+
+      const selected = await openRuntimeDialog({
+        directory: true,
+        multiple: false,
+      })
+      if (!selected || Array.isArray(selected)) return
       await openFolderWindow(selected)
     } catch (err) {
       console.error("[FolderTitleBar] failed to open folder:", err)

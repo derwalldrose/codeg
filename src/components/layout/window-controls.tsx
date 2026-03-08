@@ -1,25 +1,27 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { getCurrentWindow } from "@tauri-apps/api/window"
 import { useTranslations } from "next-intl"
 import { usePlatform } from "@/hooks/use-platform"
+import { getRuntimeWindowHandle, isTauriRuntime } from "@/lib/runtime"
 import { cn } from "@/lib/utils"
 
 export function WindowControls() {
   const t = useTranslations("Folder.windowControls")
   const { isWindows } = usePlatform()
   const [isMaximized, setIsMaximized] = useState(false)
+  const isNativeWindow = isWindows && isTauriRuntime()
 
   useEffect(() => {
-    if (!isWindows) return
+    if (!isNativeWindow) return
 
     let disposed = false
     let unlistenResize: (() => void) | null = null
     let resizeFrame: number | null = null
-    const appWindow = getCurrentWindow()
+    let appWindow: Awaited<ReturnType<typeof getRuntimeWindowHandle>> = null
 
     const syncMaximized = async () => {
+      if (!appWindow) return
       try {
         const maximized = await appWindow.isMaximized()
         if (!disposed) {
@@ -43,12 +45,17 @@ export function WindowControls() {
 
     void syncMaximized()
 
-    appWindow
-      .onResized(() => {
-        scheduleSync()
-      })
+    getRuntimeWindowHandle()
       .then((unlisten) => {
-        unlistenResize = unlisten
+        appWindow = unlisten
+        if (!appWindow) return null
+        return appWindow.onResized(() => {
+          scheduleSync()
+        })
+      })
+      .then((dispose) => {
+        unlistenResize = dispose ?? null
+        void syncMaximized()
       })
       .catch(() => {
         unlistenResize = null
@@ -61,11 +68,9 @@ export function WindowControls() {
       }
       unlistenResize?.()
     }
-  }, [isWindows])
+  }, [isNativeWindow])
 
-  if (!isWindows) return null
-
-  const appWindow = getCurrentWindow()
+  if (!isNativeWindow) return null
 
   return (
     <div className="flex h-8 items-stretch [-webkit-app-region:no-drag]">
@@ -73,9 +78,11 @@ export function WindowControls() {
         type="button"
         className={buttonClass}
         onClick={() => {
-          appWindow.minimize().catch((err) => {
-            console.error("[WindowControls] failed to minimize:", err)
-          })
+          getRuntimeWindowHandle()
+            .then((appWindow) => appWindow?.minimize())
+            .catch((err) => {
+              console.error("[WindowControls] failed to minimize:", err)
+            })
         }}
         aria-label={t("minimizeWindow")}
         title={t("minimize")}
@@ -86,9 +93,11 @@ export function WindowControls() {
         type="button"
         className={buttonClass}
         onClick={() => {
-          appWindow.toggleMaximize().catch((err) => {
-            console.error("[WindowControls] failed to toggle maximize:", err)
-          })
+          getRuntimeWindowHandle()
+            .then((appWindow) => appWindow?.toggleMaximize())
+            .catch((err) => {
+              console.error("[WindowControls] failed to toggle maximize:", err)
+            })
         }}
         aria-label={t(isMaximized ? "restoreWindow" : "maximizeWindow")}
         title={t(isMaximized ? "restore" : "maximize")}
@@ -102,9 +111,11 @@ export function WindowControls() {
           "hover:bg-[#e81123] hover:text-white active:bg-[#c50f1f] active:text-white"
         )}
         onClick={() => {
-          appWindow.close().catch((err) => {
-            console.error("[WindowControls] failed to close:", err)
-          })
+          getRuntimeWindowHandle()
+            .then((appWindow) => appWindow?.close())
+            .catch((err) => {
+              console.error("[WindowControls] failed to close:", err)
+            })
         }}
         aria-label={t("closeWindow")}
         title={t("close")}

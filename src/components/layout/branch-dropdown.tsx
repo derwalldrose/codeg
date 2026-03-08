@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import {
   GitBranch,
   ChevronDown,
@@ -61,7 +60,6 @@ import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { open } from "@tauri-apps/plugin-dialog"
 import {
   gitInit,
   gitPull,
@@ -80,6 +78,11 @@ import {
   openCommitWindow,
   setFolderParentBranch,
 } from "@/lib/tauri"
+import {
+  listenRuntimeEvent,
+  openRuntimeDialog,
+  type RuntimeUnlistenFn,
+} from "@/lib/runtime"
 import type { GitBranchList } from "@/lib/types"
 import { toast } from "sonner"
 import { useFolderContext } from "@/contexts/folder-context"
@@ -139,9 +142,9 @@ export function BranchDropdown({
   useEffect(() => {
     if (!folder) return
 
-    let unlisten: UnlistenFn | null = null
+    let unlisten: RuntimeUnlistenFn | null = null
 
-    listen<GitCommitSucceededEventPayload>(
+    listenRuntimeEvent<GitCommitSucceededEventPayload>(
       "folder://git-commit-succeeded",
       (event) => {
         if (event.payload.folder_id !== folder.id) return
@@ -251,8 +254,11 @@ export function BranchDropdown({
   }
 
   async function handleBrowseWorktreePath() {
-    const selected = await open({ directory: true, multiple: false })
-    if (selected) {
+    const selected = await openRuntimeDialog({
+      directory: true,
+      multiple: false,
+    })
+    if (selected && !Array.isArray(selected)) {
       setWorktreePath(selected)
     }
   }

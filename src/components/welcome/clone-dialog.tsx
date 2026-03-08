@@ -1,10 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import { open } from "@tauri-apps/plugin-dialog"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import { cloneRepository, openFolderWindow } from "@/lib/tauri"
+import { openRuntimeDialog } from "@/lib/runtime"
 import {
   Dialog,
   DialogContent,
@@ -34,8 +34,11 @@ export function CloneDialog({ open: isOpen, onOpenChange }: CloneDialogProps) {
   } | null>(null)
 
   const handleBrowse = async () => {
-    const selected = await open({ directory: true, multiple: false })
-    if (selected) {
+    const selected = await openRuntimeDialog({
+      directory: true,
+      multiple: false,
+    })
+    if (selected && !Array.isArray(selected)) {
       setTargetDir(selected)
     }
   }

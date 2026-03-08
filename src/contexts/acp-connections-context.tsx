@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react"
 import { useTranslations } from "next-intl"
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import {
   acpConnect,
   acpListAgents,
@@ -40,6 +39,10 @@ import {
   CONNECTION_IDLE_TIMEOUT_MS,
   IDLE_SWEEP_INTERVAL_MS,
 } from "@/lib/constants"
+import {
+  listenRuntimeEvent,
+  type RuntimeUnlistenFn,
+} from "@/lib/runtime"
 import { useAlertContext, type AlertAction } from "@/contexts/alert-context"
 
 // ── Shared types (re-exported for consumers) ──
@@ -1352,11 +1355,11 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   // Single global event listener
   useEffect(() => {
     let cancelled = false
-    let unlisten: UnlistenFn | null = null
+    let unlisten: RuntimeUnlistenFn | null = null
 
     listenerReadyRef.current = false
 
-    listen<AcpEvent>("acp://event", (event) => {
+    listenRuntimeEvent<AcpEvent>("acp://event", (event) => {
       const e = event.payload
       const contextKey = reverseMapRef.current.get(e.connection_id)
       if (!contextKey) {

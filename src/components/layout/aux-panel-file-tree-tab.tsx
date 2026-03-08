@@ -8,8 +8,6 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { listen, type UnlistenFn } from "@tauri-apps/api/event"
-import { revealItemInDir } from "@tauri-apps/plugin-opener"
 import ignore from "ignore"
 import { Check, ChevronRight } from "lucide-react"
 import { useTranslations } from "next-intl"
@@ -34,6 +32,11 @@ import {
   startFileTreeWatch,
   stopFileTreeWatch,
 } from "@/lib/tauri"
+import {
+  listenRuntimeEvent,
+  revealItemInRuntimeDir,
+  type RuntimeUnlistenFn,
+} from "@/lib/runtime"
 import { emitAttachFileToSession } from "@/lib/session-attachment-events"
 import type {
   FileTreeChangedEvent,
@@ -472,7 +475,7 @@ function RenderNode({
 
     const handleOpenInSystemExplorer = async () => {
       try {
-        await revealItemInDir(absolutePath)
+        await revealItemInRuntimeDir(absolutePath)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         toast.error(t("toasts.openDirectoryFailed"), { description: message })
@@ -576,7 +579,7 @@ function RenderNode({
 
   const handleOpenDirInSystemExplorer = async () => {
     try {
-      await revealItemInDir(absolutePath)
+      await revealItemInRuntimeDir(absolutePath)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       toast.error(t("toasts.openDirectoryFailed"), { description: message })
@@ -1697,7 +1700,7 @@ export function FileTreeTab() {
     const rootPath = folder?.path
     if (!rootPath) return
 
-    let unlisten: UnlistenFn | null = null
+    let unlisten: RuntimeUnlistenFn | null = null
     const normalizedRootPath = normalizeComparePath(rootPath)
 
     const scheduleTreeRefresh = (refreshGitStatus: boolean) => {
@@ -1836,7 +1839,7 @@ export function FileTreeTab() {
       }
 
       try {
-        unlisten = await listen<FileTreeChangedEvent>(
+        unlisten = await listenRuntimeEvent<FileTreeChangedEvent>(
           "folder://file-tree-changed",
           (event) => {
             if (

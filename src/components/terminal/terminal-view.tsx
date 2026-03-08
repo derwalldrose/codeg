@@ -1,8 +1,8 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { listen } from "@tauri-apps/api/event"
 import { terminalWrite, terminalResize } from "@/lib/tauri"
+import { listenRuntimeEvent } from "@/lib/runtime"
 import type { TerminalEvent } from "@/lib/types"
 import type { ITheme } from "@xterm/xterm"
 
@@ -168,14 +168,14 @@ export function TerminalView({
       )
 
       // Set up event listeners BEFORE fit so initial output is captured
-      const unlisten = await listen<TerminalEvent>(
+      const unlisten = await listenRuntimeEvent<TerminalEvent>(
         `terminal://output/${terminalId}`,
         (event) => {
           term.write(event.payload.data)
         }
       )
 
-      const unlistenExit = await listen<TerminalEvent>(
+      const unlistenExit = await listenRuntimeEvent<TerminalEvent>(
         `terminal://exit/${terminalId}`,
         () => {
           term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n")
