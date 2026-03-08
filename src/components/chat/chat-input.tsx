@@ -8,13 +8,21 @@ import type {
   SessionModeInfo,
   AvailableCommandInfo,
 } from "@/lib/types"
-import { MessageInput } from "@/components/chat/message-input"
+import type { QueuedPromptState } from "@/lib/pending-prompt-text"
+import {
+  MessageInput,
+  type PromptSubmitIntent,
+} from "@/components/chat/message-input"
 
 interface ChatInputProps {
   status: ConnectionStatus | null
   defaultPath?: string
   onFocus?: () => void
-  onSend: (draft: PromptDraft, modeId?: string | null) => void
+  onSend: (
+    draft: PromptDraft,
+    modeId?: string | null,
+    intent?: PromptSubmitIntent
+  ) => void
   onCancel: () => void
   modes?: SessionModeInfo[]
   configOptions?: SessionConfigOptionInfo[]
@@ -26,6 +34,9 @@ interface ChatInputProps {
   availableCommands?: AvailableCommandInfo[] | null
   attachmentTabId?: string | null
   draftStorageKey?: string | null
+  pendingPrompt?: QueuedPromptState | null
+  onSendPendingPromptNow?: () => void
+  onClearPendingPrompt?: () => void
 }
 
 export function ChatInput({
@@ -44,6 +55,9 @@ export function ChatInput({
   availableCommands,
   attachmentTabId,
   draftStorageKey,
+  pendingPrompt,
+  onSendPendingPromptNow,
+  onClearPendingPrompt,
 }: ChatInputProps) {
   const t = useTranslations("Folder.chat.chatInput")
   const isConnected = status === "connected"
@@ -56,7 +70,7 @@ export function ChatInput({
         onSend={onSend}
         onFocus={onFocus}
         defaultPath={defaultPath}
-        disabled={!isConnected}
+        disabled={!isConnected && !isPrompting}
         isPrompting={isPrompting}
         onCancel={onCancel}
         modes={modes}
@@ -69,6 +83,9 @@ export function ChatInput({
         availableCommands={availableCommands}
         attachmentTabId={attachmentTabId}
         draftStorageKey={draftStorageKey}
+        pendingPrompt={pendingPrompt}
+        onSendPendingPromptNow={onSendPendingPromptNow}
+        onClearPendingPrompt={onClearPendingPrompt}
         placeholder={
           isConnecting
             ? t("connecting")

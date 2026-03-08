@@ -36,10 +36,9 @@ function CommitPageInner() {
   const error = state.loadedId === normalizedFolderId ? state.error : null
 
   const closeWindow = useCallback(() => {
-    closeRuntimeWindow()
-      .catch((err) => {
-        console.error("[CommitPage] failed to close window:", err)
-      })
+    closeRuntimeWindow().catch((err) => {
+      console.error("[CommitPage] failed to close window:", err)
+    })
   }, [])
 
   useEffect(() => {

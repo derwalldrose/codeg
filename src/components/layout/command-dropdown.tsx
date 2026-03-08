@@ -19,10 +19,7 @@ import {
   terminalKill,
   terminalList,
 } from "@/lib/tauri"
-import {
-  listenRuntimeEvent,
-  type RuntimeUnlistenFn,
-} from "@/lib/runtime"
+import { listenRuntimeEvent, type RuntimeUnlistenFn } from "@/lib/runtime"
 import type { FolderCommand, TerminalEvent } from "@/lib/types"
 import { CommandManageDialog } from "./command-manage-dialog"
 

@@ -1115,7 +1115,15 @@
         "loadingSettings": "正在載入設定...",
         "loadingMode": "正在載入模式...",
         "cancel": "取消",
-        "send": "傳送"
+        "send": "傳送",
+        "queueNext": "快取下一則",
+        "steerNow": "立即轉向",
+        "sendNow": "立即傳送",
+        "clearQueuedPrompt": "清除快取訊息",
+        "queuedNextLabel": "下一則已快取",
+        "pendingSteerLabel": "待轉向",
+        "steering": "轉向中…",
+        "queueHint": "Enter 快取下一則 · Ctrl/Cmd+Enter 立即轉向"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "設定 > Agents",

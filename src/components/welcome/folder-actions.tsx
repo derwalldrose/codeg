@@ -20,7 +20,10 @@ export function FolderActions() {
       return
     }
 
-    const selected = await openRuntimeDialog({ directory: true, multiple: false })
+    const selected = await openRuntimeDialog({
+      directory: true,
+      multiple: false,
+    })
     if (!selected || Array.isArray(selected)) return
 
     try {

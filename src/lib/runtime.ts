@@ -44,12 +44,29 @@ export async function listenRuntimeEvent<T>(
   eventName: string,
   handler: (event: RuntimeEvent<T>) => void
 ): Promise<RuntimeUnlistenFn> {
-  if (!isTauriRuntime()) {
+  if (isTauriRuntime()) {
+    const { listen } = await import("@tauri-apps/api/event")
+    return listen<T>(eventName, handler)
+  }
+
+  if (!hasWindowRuntime()) {
     return () => {}
   }
 
-  const { listen } = await import("@tauri-apps/api/event")
-  return listen<T>(eventName, handler)
+  const listener: EventListener = (event) => {
+    const customEvent = event as CustomEvent<T>
+    handler({ payload: customEvent.detail })
+  }
+
+  window.addEventListener(eventName, listener)
+  return () => {
+    window.removeEventListener(eventName, listener)
+  }
+}
+
+export function dispatchRuntimeEvent<T>(eventName: string, payload: T): void {
+  if (!hasWindowRuntime()) return
+  window.dispatchEvent(new CustomEvent<T>(eventName, { detail: payload }))
 }
 
 export async function openRuntimeDialog(options: {

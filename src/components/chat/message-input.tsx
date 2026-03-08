@@ -13,6 +13,10 @@ import type {
   SessionConfigOptionInfo,
   SessionModeInfo,
 } from "@/lib/types"
+import type {
+  PendingPromptIntent,
+  QueuedPromptState,
+} from "@/lib/pending-prompt-text"
 import {
   ATTACH_FILE_TO_SESSION_EVENT,
   type AttachFileToSessionDetail,
@@ -27,8 +31,14 @@ import {
   saveMessageInputDraft,
 } from "@/lib/message-input-draft"
 
+export type PromptSubmitIntent = "send" | PendingPromptIntent
+
 interface MessageInputProps {
-  onSend: (draft: PromptDraft, modeId?: string | null) => void
+  onSend: (
+    draft: PromptDraft,
+    modeId?: string | null,
+    intent?: PromptSubmitIntent
+  ) => void
   placeholder?: string
   defaultPath?: string
   disabled?: boolean
@@ -47,6 +57,9 @@ interface MessageInputProps {
   availableCommands?: AvailableCommandInfo[] | null
   attachmentTabId?: string | null
   draftStorageKey?: string | null
+  pendingPrompt?: QueuedPromptState | null
+  onSendPendingPromptNow?: () => void
+  onClearPendingPrompt?: () => void
 }
 
 interface InputAttachment {
@@ -133,6 +146,9 @@ export function MessageInput({
   availableCommands,
   attachmentTabId,
   draftStorageKey,
+  pendingPrompt,
+  onSendPendingPromptNow,
+  onClearPendingPrompt,
 }: MessageInputProps) {
   const t = useTranslations("Folder.chat.messageInput")
   const effectiveDraftStorageKey = draftStorageKey ?? attachmentTabId ?? null
@@ -179,7 +195,6 @@ export function MessageInput({
   const hasAttachments = attachments.length > 0
   const hasSendableContent = text.trim().length > 0 || hasAttachments
 
-  // ── Slash command autocomplete ──
   const [slashMenuOpen, setSlashMenuOpen] = useState(false)
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
   const slashCommands = useMemo(
@@ -284,9 +299,17 @@ export function MessageInput({
     setAttachments((prev) => prev.filter((item) => item.path !== path))
   }, [])
 
-  const handleSend = useCallback(() => {
+  const clearComposer = useCallback(() => {
+    if (effectiveDraftStorageKey) {
+      clearMessageInputDraft(effectiveDraftStorageKey)
+    }
+    setText("")
+    setAttachments([])
+  }, [effectiveDraftStorageKey])
+
+  const buildDraft = useCallback((): PromptDraft | null => {
     const trimmed = textRef.current.trim()
-    if (!trimmed && attachments.length === 0) return
+    if (!trimmed && attachments.length === 0) return null
 
     const blocks: PromptInputBlock[] = []
     if (trimmed) {
@@ -305,19 +328,34 @@ export function MessageInput({
     const displayText =
       trimmed ||
       `Attached ${attachments.length} resource${attachments.length > 1 ? "s" : ""}`
-    onSend({ blocks, displayText }, showModeSelector ? effectiveModeId : null)
-    if (effectiveDraftStorageKey) {
-      clearMessageInputDraft(effectiveDraftStorageKey)
+
+    return {
+      blocks,
+      displayText,
     }
-    setText("")
-    setAttachments([])
-  }, [
-    attachments,
-    onSend,
-    effectiveModeId,
-    showModeSelector,
-    effectiveDraftStorageKey,
-  ])
+  }, [attachments])
+
+  const submitDraft = useCallback(
+    (intent: PromptSubmitIntent) => {
+      const draft = buildDraft()
+      if (!draft) return
+      onSend(draft, showModeSelector ? effectiveModeId : null, intent)
+      clearComposer()
+    },
+    [buildDraft, clearComposer, effectiveModeId, onSend, showModeSelector]
+  )
+
+  const handlePrimarySend = useCallback(() => {
+    submitDraft(isPrompting ? "queue_next" : "send")
+  }, [isPrompting, submitDraft])
+
+  const handleSteer = useCallback(() => {
+    submitDraft("steer")
+  }, [submitDraft])
+
+  const handleQueueNext = useCallback(() => {
+    submitDraft("queue_next")
+  }, [submitDraft])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -359,20 +397,39 @@ export function MessageInput({
 
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault()
-        if (!disabled) handleSend()
+        if (disabled) return
+        if (isPrompting && (e.metaKey || e.ctrlKey)) {
+          handleSteer()
+          return
+        }
+        handlePrimarySend()
       }
     },
     [
       disabled,
-      handleSend,
-      slashMenuOpen,
       filteredSlashCommands,
-      slashSelectedIndex,
+      handlePrimarySend,
       handleSlashSelect,
+      handleSteer,
+      isPrompting,
+      slashMenuOpen,
+      slashSelectedIndex,
     ]
   )
 
-  const bottomPaddingClass = "pb-10"
+  const pendingPromptLabel =
+    pendingPrompt?.intent === "steer"
+      ? t("pendingSteerLabel")
+      : t("queuedNextLabel")
+  const pendingPromptActionLabel =
+    isPrompting && pendingPrompt?.intent === "steer"
+      ? t("steering")
+      : isPrompting
+        ? t("steerNow")
+        : t("sendNow")
+  const pendingPromptActionDisabled =
+    isPrompting && pendingPrompt?.intent === "steer"
+  const bottomPaddingClass = pendingPrompt ? "pb-20" : "pb-10"
   const topPaddingClass = hasAttachments ? "pt-10" : ""
 
   return (
@@ -425,62 +482,136 @@ export function MessageInput({
           </div>
         </div>
       )}
-      <div className="absolute left-2 right-24 bottom-2 flex flex-col gap-1">
-        <div className="flex items-center gap-1 overflow-x-auto">
-          <Button
-            onClick={handlePickFiles}
-            disabled={disabled || isPrompting}
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 shrink-0"
-            title={t("attachFiles")}
-          >
-            <Plus className="size-4" />
-          </Button>
-          {showConfigLoading && (
-            <SelectorLoadingChip label={t("loadingSettings")} />
-          )}
-          {hasConfigOptions &&
-            availableConfigOptions.map((option) => (
-              <SessionConfigSelector
-                key={option.id}
-                option={option}
-                onSelect={(configId, valueId) =>
-                  onConfigOptionChange?.(configId, valueId)
-                }
+      {pendingPrompt && (
+        <div className="absolute left-2 right-2 bottom-11">
+          <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/95 px-2 py-1.5 shadow-sm backdrop-blur-sm">
+            <span className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+              {pendingPromptLabel}
+            </span>
+            <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {pendingPrompt.text}
+            </p>
+            {onSendPendingPromptNow && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={onSendPendingPromptNow}
+                disabled={pendingPromptActionDisabled}
+                title={pendingPromptActionLabel}
+              >
+                {pendingPromptActionLabel}
+              </Button>
+            )}
+            {onClearPendingPrompt && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onClearPendingPrompt}
+                title={t("clearQueuedPrompt")}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="absolute inset-x-2 bottom-2 flex items-end justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1 overflow-x-auto">
+            <Button
+              onClick={handlePickFiles}
+              disabled={disabled}
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              title={t("attachFiles")}
+            >
+              <Plus className="size-4" />
+            </Button>
+            {showConfigLoading && (
+              <SelectorLoadingChip label={t("loadingSettings")} />
+            )}
+            {hasConfigOptions &&
+              availableConfigOptions.map((option) => (
+                <SessionConfigSelector
+                  key={option.id}
+                  option={option}
+                  onSelect={(configId, valueId) =>
+                    onConfigOptionChange?.(configId, valueId)
+                  }
+                />
+              ))}
+            {showModeLoading && (
+              <SelectorLoadingChip label={t("loadingMode")} />
+            )}
+            {showModeSelector && effectiveModeId && (
+              <ModeSelector
+                modes={availableModes}
+                selectedModeId={effectiveModeId}
+                onSelect={handleModeSelect}
               />
-            ))}
-          {showModeLoading && <SelectorLoadingChip label={t("loadingMode")} />}
-          {showModeSelector && effectiveModeId && (
-            <ModeSelector
-              modes={availableModes}
-              selectedModeId={effectiveModeId}
-              onSelect={handleModeSelect}
-            />
+            )}
+          </div>
+          {isPrompting && hasSendableContent && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("queueHint")}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {isPrompting ? (
+            hasSendableContent ? (
+              <>
+                <Button
+                  type="button"
+                  onClick={handleQueueNext}
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  disabled={disabled}
+                  title={t("queueNext")}
+                >
+                  {t("queueNext")}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleSteer}
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  disabled={disabled}
+                  title={t("steerNow")}
+                >
+                  {t("steerNow")}
+                </Button>
+              </>
+            ) : onCancel ? (
+              <Button
+                onClick={onCancel}
+                variant="destructive"
+                size="icon"
+                className="h-8 w-8"
+                title={t("cancel")}
+              >
+                <Square className="h-4 w-4" />
+              </Button>
+            ) : null
+          ) : (
+            <Button
+              onClick={handlePrimarySend}
+              disabled={disabled || !hasSendableContent}
+              size="icon"
+              className="h-8 w-8"
+              title={t("send")}
+            >
+              <Send className="h-4 w-4" />
+            </Button>
           )}
         </div>
       </div>
-      {isPrompting && onCancel ? (
-        <Button
-          onClick={onCancel}
-          variant="destructive"
-          size="icon"
-          className="absolute right-2 bottom-2"
-          title={t("cancel")}
-        >
-          <Square className="h-4 w-4" />
-        </Button>
-      ) : (
-        <Button
-          onClick={handleSend}
-          disabled={disabled || !hasSendableContent}
-          size="icon"
-          className="absolute right-2 bottom-2"
-          title={t("send")}
-        >
-          <Send className="h-4 w-4" />
-        </Button>
-      )}
     </div>
   )
 }

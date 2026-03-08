@@ -1115,7 +1115,15 @@
         "loadingSettings": "正在加载设置...",
         "loadingMode": "正在加载模式...",
         "cancel": "取消",
-        "send": "发送"
+        "send": "发送",
+        "queueNext": "缓存下一条",
+        "steerNow": "立即转向",
+        "sendNow": "立即发送",
+        "clearQueuedPrompt": "清除缓存消息",
+        "queuedNextLabel": "下一条已缓存",
+        "pendingSteerLabel": "待转向",
+        "steering": "转向中…",
+        "queueHint": "Enter 缓存下一条 · Ctrl/Cmd+Enter 立即转向"
       },
       "welcomeInputPanel": {
         "agentsSettingsPath": "设置 > Agents",
